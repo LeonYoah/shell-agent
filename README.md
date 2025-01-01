@@ -11,6 +11,9 @@ Shell命令执行服务，支持同步/异步执行Shell命令，并通过HTTP�
 - 输出自动清理机制
 - 分布式部署支持（通过Dubbo+Nacos）
 - 中文编码自动处理（Windows使用GBK，Linux使用UTF-8）
+- 支持系统服务方式运行
+- 支持开机自启动
+- 自动服务重启机制
 
 ## 环境要求
 
@@ -19,6 +22,7 @@ Shell命令执行服务，支持同步/异步执行Shell命令，并通过HTTP�
 - Nacos 2.x
 - Spring Boot 2.3.12.RELEASE
 - Dubbo 2.7.15
+- systemd (Linux系统服务管理)
 
 ## 快速开始
 
@@ -48,31 +52,10 @@ shell:
     cleanup-interval-ms: 300000
 ```
 
-### 2. 启动服务
+### 2. 部署方式
 
-```bash
-# 开发环境
-mvn spring-boot:run -Pdev
+#### 2.1 脚本部署
 
-# 测试环境
-mvn spring-boot:run -Ptest
-
-# 生产环境
-mvn spring-boot:run -Pprod
-```
-
-## 部署说明
-
-### 1. 服务器要求
-
-- JDK 8+
-- 至少512MB可用内存
-- 建议使用Linux系统
-- 需要访问Nacos服务器
-
-### 2. 部署步骤
-
-1. 准备部署环境：
 ```bash
 # 创建部署目录
 mkdir -p /opt/apps/shell-executor
@@ -80,69 +63,175 @@ mkdir -p /opt/apps/shell-executor/logs
 
 # 设置权限
 chmod +x deploy/*.sh
-```
 
-2. 复制文件到服务器：
-```bash
-# 复制JAR包和脚本
+# 复制文件到服务器
 scp target/shell-executor-1.0.0.jar user@server:/opt/apps/shell-executor/
 scp deploy/*.sh user@server:/opt/apps/shell-executor/
-```
-
-3. 部署和启动：
-```bash
-cd /opt/apps/shell-executor
 
 # 部署新版本
 ./deploy.sh
-
-# 或者使用服务管理脚本
-./service.sh start   # 启动服务
-./service.sh stop    # 停止服务
-./service.sh restart # 重启服务
-./service.sh status  # 查看状态
-./service.sh logs    # 查看日志
 ```
 
-### 3. 配置说明
+#### 2.2 系统服务方式部署
 
-1. JVM配置（在deploy/service.sh中修改）：
+1. 安装服务：
+```bash
+# 复制部署文件
+sudo cp deploy/* /opt/apps/shell-executor/
+
+# 运行安装脚本
+sudo ./install.sh
+```
+
+2. 服务管理：
+```bash
+# 使用systemctl管理服务
+sudo systemctl start shell-executor    # 启动服务
+sudo systemctl stop shell-executor     # 停止服务
+sudo systemctl restart shell-executor  # 重启服务
+sudo systemctl status shell-executor   # 查看状态
+sudo systemctl enable shell-executor   # 启用开机自启动
+sudo systemctl disable shell-executor  # 禁用开机自启动
+
+# 或使用服务脚本
+sudo /opt/apps/shell-executor/service.sh start    # 启动服务
+sudo /opt/apps/shell-executor/service.sh stop     # 停止服务
+sudo /opt/apps/shell-executor/service.sh restart  # 重启服务
+sudo /opt/apps/shell-executor/service.sh status   # 查看状态
+sudo /opt/apps/shell-executor/service.sh logs     # 查看日志
+sudo /opt/apps/shell-executor/service.sh clean    # 清理日志
+```
+
+### 3. 服务特性
+
+#### 3.1 自动重启机制
+- 服务异常退出时自动重启
+- 配置10秒的重启延迟
+- 使用PID文件跟踪进程状态
+
+#### 3.2 健康检查
+- 启动时等待服务就绪
+- 通过actuator接口验证服务状态
+- 提供详细的启动状态信息
+
+#### 3.3 日志管理
+- 自动清理7天前的日志
+- 支持实时查看日志
+- 优化日志输出格式
+
+#### 3.4 服务配置
+服务配置文件：`/etc/systemd/system/shell-executor.service`
+```ini
+[Unit]
+Description=Shell Executor Service
+After=network.target
+
+[Service]
+Type=forking
+User=root
+Group=root
+Environment="JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PROFILES_ACTIVE=prod"
+WorkingDirectory=/opt/apps/shell-executor
+ExecStart=/opt/apps/shell-executor/service.sh start
+ExecStop=/opt/apps/shell-executor/service.sh stop
+ExecReload=/opt/apps/shell-executor/service.sh restart
+PIDFile=/opt/apps/shell-executor/shell-executor.pid
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 4. 配置说明
+
+#### 4.1 JVM配置
+在`service.sh`中修改：
 ```bash
 JAVA_OPTS="-server -Xms512m -Xmx512m -Xmn256m"
 ```
 
-2. 环境配置：
+#### 4.2 环境配置
+在`service.sh`或系统服务配置中修改：
 ```bash
 PROFILES_ACTIVE="prod"  # 可选: dev, test, prod
 ```
 
-3. 目录结构：
+#### 4.3 Dubbo网卡配置
+1. 在`application.yml`中配置：
+```yaml
+dubbo:
+  protocol:
+    name: dubbo
+    port: 20880
+    host: ${DUBBO_HOST:}  # 可通过环境变量指定
+    # 指定网卡
+    preferred-network-interface: eth0  # 优先使用的网卡名称
+    # 或者使用正则匹配网卡
+    preferred-network-interface-pattern: eth.*  # 网卡名称匹配模式
 ```
-/opt/apps/shell-executor/
-├── shell-executor-1.0.0.jar
-├── deploy.sh
-├── service.sh
-└── logs/
-    ├── startup.log
-    └── ...
-```
 
-### 4. 日志查看
-
-- 启动日志：`/opt/apps/shell-executor/logs/startup.log`
-- 应用日志：`/opt/apps/shell-executor/logs/shell-executor.log`
-
-### 5. 健康检查
-
-1. HTTP接口检查：
+2. 在启动脚本中指定（推荐）：
 ```bash
-curl http://localhost:8080/actuator/health
+# 在service.sh中添加JVM参数
+JAVA_OPTS="$JAVA_OPTS \
+    -Ddubbo.protocol.host=192.168.1.100 \
+    -Ddubbo.protocol.port=20880 \
+    -Ddubbo.protocol.preferred-network-interface=eth0"
 ```
 
-2. 进程检查：
-```bash
-ps -ef | grep shell-executor
+3. 使用环境变量：
+在`shell-executor.service`中添加：
+```ini
+[Service]
+Environment="DUBBO_HOST=192.168.1.100"
+Environment="DUBBO_PORT=20880"
+Environment="DUBBO_NETWORK_INTERFACE=eth0"
 ```
+
+4. 网卡配置优先级：
+   - 命令行参数 (-D) > 环境变量 > 配置文件
+   - 具体IP地址 > 网卡名称 > 网卡匹配模式
+
+5. 多网卡环境建议：
+   - 明确指定host地址
+   - 或指定固定的网卡名称
+   - 避免使用自动探测
+
+#### 4.4 日志配置
+- 日志路径：`/opt/apps/shell-executor/logs`
+- 日志文件：
+  - `startup.log`: 启动日志
+  - `info.log`: 信息日志
+  - `error.log`: 错误日志
+- 日志保留策略：自动清理7天前的日志
+
+### 5. 注意事项
+
+1. 系统要求：
+   - 支持systemd的Linux系统
+   - JDK 8或更高版本
+   - 足够的磁盘空间用于日志存储
+
+2. 权限要求：
+   - 安装服务需要root权限
+   - 服务运行用户需要对应目录的读写权限
+
+3. 网络要求：
+   - 确保8080端口可用
+   - 需要访问Nacos服务器
+
+4. 安全建议：
+   - 定期检查日志文件
+   - 及时更新JDK版本
+   - 适当配置命令黑名单
+
+5. 维护建议：
+   - 定期检查服务状态
+   - 监控日志输出
+   - 定期清理旧的备份文件
 
 ## HTTP接口调用
 
@@ -238,30 +327,117 @@ dubbo:
     check: false
 ```
 
-### 3. 注入并使用服务
+### 3. 指定机器执行命令
+
+#### 3.1 通过IP和端口指定
 
 ```java
 @DubboReference(version = "1.0.0")
 private ShellExecutorService shellExecutorService;
 
-// 同步执行
-public void executeSync() {
-    ExecuteResult result = shellExecutorService.executeCommand("echo hello");
-    System.out.println("输出: " + result.getOutput());
-}
-
-// 异步执行
-public void executeAsync() {
-    String executionId = shellExecutorService.executeCommandAsync(
-        new ShellExecutionRequest("ping localhost")
-    );
+public void executeOnSpecificMachine() {
+    // 创建请求对象，指定目标机器
+    ShellExecutionRequest request = new ShellExecutionRequest();
+    request.setCommand("echo hello");
+    request.setTargetHost("192.168.1.100");  // 目标机器IP
+    request.setTargetPort(20880);            // 目标机器端口
     
-    // 获取执行结果
-    ShellExecutionOutput output = shellExecutorService.getOutput(executionId);
+    // 同步执行
+    ExecuteResult result = shellExecutorService.executeCommand(request);
+    System.out.println("输出: " + result.getOutput());
+    
+    // 异步执行
+    String executionId = shellExecutorService.executeCommandAsync(request);
+    
+    // 获取执行结果（注意：获取结果时也需要指定目标机器）
+    ShellExecutionOutput output = shellExecutorService.getOutput(executionId, request.getTargetHost(), request.getTargetPort());
     System.out.println("状态: " + output.getStatus());
     output.getOutputLines().forEach(System.out::println);
 }
 ```
+
+#### 3.2 使用RpcContext直接指定URL
+
+```java
+@DubboReference(version = "1.0.0")
+private ShellExecutorService shellExecutorService;
+
+public void executeWithRpcContext() {
+    // 设置目标机器的URL
+    RpcContext.getContext().setUrl("dubbo://192.168.1.100:20880");
+    
+    try {
+        // 执行命令
+        ExecuteResult result = shellExecutorService.executeCommand("echo hello");
+        System.out.println("输出: " + result.getOutput());
+    } finally {
+        // 清除URL设置，避免影响后续调用
+        RpcContext.getContext().setUrl(null);
+    }
+}
+```
+
+#### 3.3 获取可用节点
+
+```java
+@DubboReference(version = "1.0.0")
+private ShellExecutorService shellExecutorService;
+
+public List<String> getAvailableNodes() {
+    // 获取所有可用的执行节点
+    List<URL> urls = shellExecutorService.getAvailableNodes();
+    
+    // 转换为地址列表
+    return urls.stream()
+        .map(url -> url.getHost() + ":" + url.getPort())
+        .collect(Collectors.toList());
+}
+```
+
+#### 3.4 负载均衡策略
+
+可以在@DubboReference注解中配置负载均衡策略：
+
+```java
+// 随机策略
+@DubboReference(version = "1.0.0", loadbalance = "random")
+private ShellExecutorService shellExecutorService;
+
+// 轮询策略
+@DubboReference(version = "1.0.0", loadbalance = "roundrobin")
+private ShellExecutorService shellExecutorService;
+
+// 最少活跃调用数
+@DubboReference(version = "1.0.0", loadbalance = "leastactive")
+private ShellExecutorService shellExecutorService;
+
+// 一致性Hash
+@DubboReference(version = "1.0.0", loadbalance = "consistenthash")
+private ShellExecutorService shellExecutorService;
+```
+
+### 4. 注意事项
+
+1. 指定机器执行时的注意点：
+   - 确保目标机器的IP和端口正确
+   - 检查网络连通性
+   - 验证目标机器的服务是否正常运行
+   - 注意清理RpcContext的URL设置
+
+2. 异步执行注意事项：
+   - 获取异步执行结果时需要指定同一台机器
+   - 建议保存执行机器的信息，以便后续查询结果
+
+3. 错误处理：
+   - 目标机器不可用时会抛出RpcException
+   - 网络超时需要适当配置timeout参数
+   - 建议实现重试机制
+
+4. 最佳实践：
+   - 使用服务发现获取可用节点
+   - 实现机器健康检查
+   - 合理配置负载均衡策略
+   - 保存执行记录便于追踪
 
 ## 注意事项
 

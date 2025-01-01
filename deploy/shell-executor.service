@@ -1,0 +1,25 @@
+[Unit]
+Description=Shell Executor Service
+After=network.target
+
+[Service]
+Type=forking
+User=root
+Group=root
+Environment="JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PROFILES_ACTIVE=prod"
+# Dubbo配置
+Environment="DUBBO_PORT=20880"
+Environment="DUBBO_HOST="
+Environment="DUBBO_NETWORK_INTERFACE=eth0"
+WorkingDirectory=/opt/apps/shell-executor
+ExecStart=/opt/apps/shell-executor/service.sh start
+ExecStop=/opt/apps/shell-executor/service.sh stop
+ExecReload=/opt/apps/shell-executor/service.sh restart
+PIDFile=/opt/apps/shell-executor/shell-executor.pid
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target 
