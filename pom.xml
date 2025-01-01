@@ -16,7 +16,7 @@
 
     <properties>
         <java.version>8</java.version>
-        <dubbo.version>3.2.0</dubbo.version>
+        <dubbo.version>3.1.11</dubbo.version>
         <nacos.version>2.2.0</nacos.version>
         <commons.exec.version>1.3</commons.exec.version>
     </properties>
