@@ -1,0 +1,41 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: shell-executor
+
+dubbo:
+  application:
+    name: ${spring.application.name}
+  protocol:
+    name: dubbo
+    port: -1
+  registry:
+    address: nacos://localhost:8848
+    parameters:
+      namespace: public
+      group: DEFAULT_GROUP
+  provider:
+    timeout: 60000
+    retries: 0
+
+shell:
+  executor:
+    allowed-commands:
+      - "ls"
+      - "pwd"
+      - "dir"
+      - "echo"
+      - "ping"
+      - "netstat"
+      - "ipconfig"
+      - "systeminfo"
+    command-timeout-ms: 60000
+    output-expiration-ms: 1800000
+    cleanup-interval-ms: 300000
+
+logging:
+  level:
+    root: INFO
+    com.example.shellexecutor: DEBUG 
