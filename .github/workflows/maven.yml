@@ -40,11 +40,19 @@ jobs:
       env:
         MAVEN_OPTS: "-Xmx3072m"
         
+    - name: Prepare deployment scripts
+      run: |
+        chmod +x deploy/*.sh
+        tar -czf shell-executor-deploy.tar.gz target/shell-executor-*.jar deploy/*.sh
+        
     - name: Upload artifact
       uses: actions/upload-artifact@v3
       with:
         name: shell-executor
-        path: target/*.jar
+        path: |
+          target/*.jar
+          deploy/*.sh
+          shell-executor-deploy.tar.gz
 
     - name: Build Status
       if: always()

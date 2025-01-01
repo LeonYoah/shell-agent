@@ -61,6 +61,89 @@ mvn spring-boot:run -Ptest
 mvn spring-boot:run -Pprod
 ```
 
+## 部署说明
+
+### 1. 服务器要求
+
+- JDK 8+
+- 至少512MB可用内存
+- 建议使用Linux系统
+- 需要访问Nacos服务器
+
+### 2. 部署步骤
+
+1. 准备部署环境：
+```bash
+# 创建部署目录
+mkdir -p /opt/apps/shell-executor
+mkdir -p /opt/apps/shell-executor/logs
+
+# 设置权限
+chmod +x deploy/*.sh
+```
+
+2. 复制文件到服务器：
+```bash
+# 复制JAR包和脚本
+scp target/shell-executor-1.0.0.jar user@server:/opt/apps/shell-executor/
+scp deploy/*.sh user@server:/opt/apps/shell-executor/
+```
+
+3. 部署和启动：
+```bash
+cd /opt/apps/shell-executor
+
+# 部署新版本
+./deploy.sh
+
+# 或者使用服务管理脚本
+./service.sh start   # 启动服务
+./service.sh stop    # 停止服务
+./service.sh restart # 重启服务
+./service.sh status  # 查看状态
+./service.sh logs    # 查看日志
+```
+
+### 3. 配置说明
+
+1. JVM配置（在deploy/service.sh中修改）：
+```bash
+JAVA_OPTS="-server -Xms512m -Xmx512m -Xmn256m"
+```
+
+2. 环境配置：
+```bash
+PROFILES_ACTIVE="prod"  # 可选: dev, test, prod
+```
+
+3. 目录结构：
+```
+/opt/apps/shell-executor/
+├── shell-executor-1.0.0.jar
+├── deploy.sh
+├── service.sh
+└── logs/
+    ├── startup.log
+    └── ...
+```
+
+### 4. 日志查看
+
+- 启动日志：`/opt/apps/shell-executor/logs/startup.log`
+- 应用日志：`/opt/apps/shell-executor/logs/shell-executor.log`
+
+### 5. 健康检查
+
+1. HTTP接口检查：
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+2. 进程检查：
+```bash
+ps -ef | grep shell-executor
+```
+
 ## HTTP接口调用
 
 ### 1. 同步执行命令
