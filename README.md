@@ -405,6 +405,64 @@ public class ShellExecutorManager {
             throw new RuntimeException("Failed to execute command: " + e.getMessage());
         }
     }
+
+    /**
+     * 异步执行命令
+     * @param host 目标主机
+     * @param command 要执行的命令
+     * @return 执行ID，用于后续获取结果
+     */
+    public String executeCommandAsync(String host, String command) {
+        ShellExecutionRequest request = new ShellExecutionRequest();
+        request.setCommand(command);
+        request.setTargetHost(host);
+        
+        try {
+            return shellExecutorService.executeCommandAsync(request);
+        } catch (RpcException e) {
+            log.error("Failed to execute async command on host: " + host, e);
+            throw new RuntimeException("Failed to execute async command: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取异步执行结果
+     * @param executionId 执行ID
+     * @param host 目标主机
+     * @return 执行输出结果
+     */
+    public ShellExecutionOutput getAsyncResult(String executionId, String host) {
+        try {
+            return shellExecutorService.getOutput(executionId, host, null);
+        } catch (RpcException e) {
+            log.error("Failed to get async result for execution: " + executionId + " on host: " + host, e);
+            throw new RuntimeException("Failed to get async result: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 等待异步执行完成并获取结果
+     * @param executionId 执行ID
+     * @param host 目标主机
+     * @param timeoutMs 超时时间(毫秒)
+     * @return 执行输出结果
+     */
+    public ShellExecutionOutput waitForResult(String executionId, String host, long timeoutMs) {
+        long startTime = System.currentTimeMillis();
+        while (System.currentTimeMillis() - startTime < timeoutMs) {
+            try {
+                ShellExecutionOutput output = getAsyncResult(executionId, host);
+                if (Boolean.TRUE.equals(output.getFinished())) {
+                    return output;
+                }
+                Thread.sleep(100); // 避免频繁查询
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for result", e);
+            }
+        }
+        throw new RuntimeException("Timeout waiting for result after " + timeoutMs + "ms");
+    }
     
     /**
      * 获取指定主机的所有可用实例
@@ -418,6 +476,59 @@ public class ShellExecutorManager {
             log.error("Failed to get available instances for host: " + host, e);
             throw new RuntimeException("Failed to get available instances: " + e.getMessage());
         }
+    }
+
+    /**
+     * 使用CompletableFuture异步执行命令
+     * @param host 目标主机
+     * @param command 要执行的命令
+     * @return 异步执行结果的Future
+     */
+    public CompletableFuture<ShellExecutionOutput> executeCommandAsyncWithFuture(String host, String command) {
+        return CompletableFuture.supplyAsync(() -> {
+            String executionId = executeCommandAsync(host, command);
+            return waitForResult(executionId, host, 60000); // 默认60秒超时
+        });
+    }
+
+    /**
+     * 批量执行命令
+     * @param hosts 目标主机列表
+     * @param command 要执行的命令
+     * @return 每个主机的执行结果
+     */
+    public Map<String, ExecuteResult> executeCommandOnMultipleHosts(List<String> hosts, String command) {
+        return hosts.stream()
+            .collect(Collectors.toMap(
+                host -> host,
+                host -> {
+                    try {
+                        return executeCommand(host, command);
+                    } catch (Exception e) {
+                        log.error("Failed to execute command on host: " + host, e);
+                        ExecuteResult result = new ExecuteResult();
+                        result.setExitCode(-1);
+                        result.setError(e.getMessage());
+                        result.setSuccess(false);
+                        return result;
+                    }
+                }
+            ));
+    }
+
+    /**
+     * 批量异步执行命令
+     * @param hosts 目标主机列表
+     * @param command 要执行的命令
+     * @return 异步执行结果的Future Map
+     */
+    public Map<String, CompletableFuture<ShellExecutionOutput>> executeCommandAsyncOnMultipleHosts(
+            List<String> hosts, String command) {
+        return hosts.stream()
+            .collect(Collectors.toMap(
+                host -> host,
+                host -> executeCommandAsyncWithFuture(host, command)
+            ));
     }
 }
 ```
