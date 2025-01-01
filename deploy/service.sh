@@ -3,8 +3,10 @@
 # 配置信息
 APP_NAME="shell-executor"
 APP_VERSION="1.0.0"
+# 添加实例ID支持
+INSTANCE_ID="${INSTANCE_ID:-1}"
 JAR_NAME="$APP_NAME-$APP_VERSION.jar"
-BASE_DIR="/opt/apps/$APP_NAME"
+BASE_DIR="/opt/apps/$APP_NAME-$INSTANCE_ID"
 DEPLOY_DIR="$BASE_DIR"
 LOG_DIR="$BASE_DIR/logs"
 PID_FILE="$BASE_DIR/$APP_NAME.pid"
@@ -13,9 +15,15 @@ PID_FILE="$BASE_DIR/$APP_NAME.pid"
 JAVA_OPTS="-server -Xms512m -Xmx512m -Xmn256m"
 
 # Dubbo配置
-DUBBO_PORT="${DUBBO_PORT:-20880}"
+# 不同实例使用不同的dubbo端口
+DUBBO_PORT="${DUBBO_PORT:-$((20880 + INSTANCE_ID - 1))}"
 DUBBO_HOST="${DUBBO_HOST:-}"
 DUBBO_NETWORK_INTERFACE="${DUBBO_NETWORK_INTERFACE:-}"
+
+# HTTP端口配置
+# 不同实例使用不同的HTTP端口
+HTTP_PORT="${HTTP_PORT:-$((8080 + INSTANCE_ID - 1))}"
+JAVA_OPTS="$JAVA_OPTS -Dserver.port=$HTTP_PORT"
 
 # 如果没有指定DUBBO_HOST，尝试自动获取IP
 if [ -z "$DUBBO_HOST" ] && [ -n "$DUBBO_NETWORK_INTERFACE" ]; then

@@ -327,93 +327,174 @@ dubbo:
     check: false
 ```
 
-### 3. 指定机器执行命令
+### 3. 负载均衡调用
 
-#### 3.1 通过IP和端口指定
+#### 3.1 配置负载均衡策略
 
 ```java
-@DubboReference(version = "1.0.0")
+@DubboReference(
+    version = "1.0.0",
+    loadbalance = "random",     // 随机负载均衡
+    cluster = "failover",       // 失败自动切换
+    retries = 2                 // 重试次数
+)
 private ShellExecutorService shellExecutorService;
-
-public void executeOnSpecificMachine() {
-    // 创建请求对象，指定目标机器
-    ShellExecutionRequest request = new ShellExecutionRequest();
-    request.setCommand("echo hello");
-    request.setTargetHost("192.168.1.100");  // 目标机器IP
-    request.setTargetPort(20880);            // 目标机器端口
-    
-    // 同步执行
-    ExecuteResult result = shellExecutorService.executeCommand(request);
-    System.out.println("输出: " + result.getOutput());
-    
-    // 异步执行
-    String executionId = shellExecutorService.executeCommandAsync(request);
-    
-    // 获取执行结果（注意：获取结果时也需要指定目标机器）
-    ShellExecutionOutput output = shellExecutorService.getOutput(executionId, request.getTargetHost(), request.getTargetPort());
-    System.out.println("状态: " + output.getStatus());
-    output.getOutputLines().forEach(System.out::println);
-}
 ```
 
-#### 3.2 使用RpcContext直接指定URL
+支持的负载均衡策略：
+- random：随机选择实例（默认）
+- roundrobin：轮询选择实例
+- leastactive：选择最少活跃调用的实例
+- consistenthash：相同参数的请求总是发到同一实例
+
+#### 3.2 同一主机多实例调用
+
+当一台机器部署了多个shell-executor实例时，可以只指定主机IP，让Dubbo自动在多个实例间进行负载均衡：
 
 ```java
-@DubboReference(version = "1.0.0")
-private ShellExecutorService shellExecutorService;
+// 创建请求对象，只指定主机IP
+ShellExecutionRequest request = new ShellExecutionRequest();
+request.setCommand("echo hello");
+request.setTargetHost("192.168.1.100");  // 只指定目标机器IP
+// request.setTargetPort(20880);         // 不指定端口，由Dubbo自动选择实例
 
-public void executeWithRpcContext() {
-    // 设置目标机器的URL
-    RpcContext.getContext().setUrl("dubbo://192.168.1.100:20880");
+// 同步执行（会随机分配到该主机的某个实例）
+ExecuteResult result = shellExecutorService.executeCommand(request);
+
+// 异步执行
+String executionId = shellExecutorService.executeCommandAsync(request);
+
+// 获取执行结果（会自动路由到执行命令的实例）
+ShellExecutionOutput output = shellExecutorService.getOutput(
+    executionId, 
+    request.getTargetHost(),    // 只需指定主机IP
+    null                        // 端口传null，自动路由
+);
+```
+
+#### 3.3 服务管理类示例
+
+推荐创建一个服务管理类来处理shell-executor的调用：
+
+```java
+@Service
+@Slf4j
+public class ShellExecutorManager {
     
-    try {
-        // 执行命令
-        ExecuteResult result = shellExecutorService.executeCommand("echo hello");
-        System.out.println("输出: " + result.getOutput());
-    } finally {
-        // 清除URL设置，避免影响后续调用
-        RpcContext.getContext().setUrl(null);
+    @DubboReference(
+        version = "1.0.0",
+        loadbalance = "random",
+        cluster = "failover",
+        retries = 2
+    )
+    private ShellExecutorService shellExecutorService;
+    
+    /**
+     * 在指定主机的多个实例中随机执行命令
+     */
+    public ExecuteResult executeCommand(String host, String command) {
+        ShellExecutionRequest request = new ShellExecutionRequest();
+        request.setCommand(command);
+        request.setTargetHost(host);
+        // 不指定端口，让Dubbo自动在可用实例中选择
+        
+        try {
+            return shellExecutorService.executeCommand(request);
+        } catch (RpcException e) {
+            log.error("Failed to execute command on host: " + host, e);
+            throw new RuntimeException("Failed to execute command: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 获取指定主机的所有可用实例
+     */
+    public List<URL> getAvailableInstances(String host) {
+        try {
+            return shellExecutorService.getAvailableNodes().stream()
+                .filter(url -> host.equals(url.getHost()))
+                .collect(Collectors.toList());
+        } catch (RpcException e) {
+            log.error("Failed to get available instances for host: " + host, e);
+            throw new RuntimeException("Failed to get available instances: " + e.getMessage());
+        }
     }
 }
 ```
 
-#### 3.3 获取可用节点
+#### 3.4 负载均衡特性
 
-```java
-@DubboReference(version = "1.0.0")
-private ShellExecutorService shellExecutorService;
+1. 自动负载均衡：
+   - 在同一主机的多个实例间自动分配请求
+   - 支持多种负载均衡策略
+   - 可以动态感知实例上下线
 
-public List<String> getAvailableNodes() {
-    // 获取所有可用的执行节点
-    List<URL> urls = shellExecutorService.getAvailableNodes();
-    
-    // 转换为地址列表
-    return urls.stream()
-        .map(url -> url.getHost() + ":" + url.getPort())
-        .collect(Collectors.toList());
+2. 容错机制：
+   - failover：失败自动切换到其他实例
+   - retries：失败重试
+   - 自动跳过不健康的实例
+
+3. 自动路由：
+   - 只需指定host，不需要指定具体端口
+   - 自动路由到正确的实例
+   - 支持异步调用的结果获取
+
+4. 实例发现：
+   - 可以获取指定主机的所有可用实例
+   - 支持实例健康检查
+   - 实时感知实例状态变化
+
+#### 3.5 使用建议
+
+1. 部署建议：
+   - 建议每台机器部署2-3个实例
+   - 实例之间的端口号自动递增
+   - 使用不同的目录存放不同实例
+
+2. 负载均衡策略选择：
+   - random：适用于普通场景
+   - roundrobin：需要均匀分配请求时
+   - leastactive：处理时间差异大的命令
+   - consistenthash：需要会话保持时
+
+3. 错误处理：
+   - 配置合理的重试次数
+   - 实现错误重试机制
+   - 记录详细的错误日志
+
+4. 监控建议：
+   - 监控各个实例的负载情况
+   - 检查实例的健康状态
+   - 观察请求的分配情况
+
+#### 3.6 示例场景
+
+1. 执行命令：
+```bash
+POST http://your-service/api/shell/execute
+{
+    "command": "echo hello",
+    "targetHost": "192.168.1.100"  # 命令会随机分配到该主机的某个实例
 }
 ```
 
-#### 3.4 负载均衡策略
+2. 异步执行：
+```bash
+POST http://your-service/api/shell/execute/async
+{
+    "command": "ping localhost",
+    "targetHost": "192.168.1.100"
+}
+```
 
-可以在@DubboReference注解中配置负载均衡策略：
+3. 获取结果：
+```bash
+GET http://your-service/api/shell/output/{executionId}?targetHost=192.168.1.100
+```
 
-```java
-// 随机策略
-@DubboReference(version = "1.0.0", loadbalance = "random")
-private ShellExecutorService shellExecutorService;
-
-// 轮询策略
-@DubboReference(version = "1.0.0", loadbalance = "roundrobin")
-private ShellExecutorService shellExecutorService;
-
-// 最少活跃调用数
-@DubboReference(version = "1.0.0", loadbalance = "leastactive")
-private ShellExecutorService shellExecutorService;
-
-// 一致性Hash
-@DubboReference(version = "1.0.0", loadbalance = "consistenthash")
-private ShellExecutorService shellExecutorService;
+4. 查看实例：
+```bash
+GET http://your-service/api/shell/instances?targetHost=192.168.1.100
 ```
 
 ### 4. 注意事项
