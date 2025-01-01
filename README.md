@@ -393,17 +393,64 @@ public class ShellExecutorManager {
      * 在指定主机的多个实例中随机执行命令
      */
     public ExecuteResult executeCommand(String host, String command) {
+        return executeCommand(host, command, 60000, 3); // 默认60秒超时，重试3次
+    }
+
+    /**
+     * 在指定主机执行命令，支持超时和重试
+     * @param host 目标主机
+     * @param command 要执行的命令
+     * @param timeoutMs 执行超时时间(毫秒)
+     * @param maxRetries 最大重试次数
+     * @return 执行结果
+     */
+    public ExecuteResult executeCommand(String host, String command, long timeoutMs, int maxRetries) {
         ShellExecutionRequest request = new ShellExecutionRequest();
         request.setCommand(command);
         request.setTargetHost(host);
-        // 不指定端口，让Dubbo自动在可用实例中选择
+        request.setTimeout(timeoutMs);  // 设置超时时间
         
-        try {
-            return shellExecutorService.executeCommand(request);
-        } catch (RpcException e) {
-            log.error("Failed to execute command on host: " + host, e);
-            throw new RuntimeException("Failed to execute command: " + e.getMessage());
+        Exception lastException = null;
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                if (attempt > 0) {
+                    log.info("Retrying command execution on host: {} (attempt {}/{})", host, attempt, maxRetries);
+                    Thread.sleep(1000); // 重试前等待1秒
+                }
+                return shellExecutorService.executeCommand(request);
+            } catch (RpcException e) {
+                lastException = e;
+                log.warn("Failed to execute command on host: {} (attempt {}/{}): {}", 
+                    host, attempt, maxRetries, e.getMessage());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Command execution interrupted", e);
+            }
         }
+        
+        log.error("Failed to execute command after {} retries on host: {}", maxRetries, host);
+        ExecuteResult result = new ExecuteResult();
+        result.setExitCode(-1);
+        result.setError(lastException != null ? lastException.getMessage() : "Unknown error");
+        result.setSuccess(false);
+        return result;
+    }
+
+    /**
+     * 批量执行命令，支持超时和重试
+     * @param hosts 目标主机列表
+     * @param command 要执行的命令
+     * @param timeoutMs 执行超时时间(毫秒)
+     * @param maxRetries 最大重试次数
+     * @return 每个主机的执行结果
+     */
+    public Map<String, ExecuteResult> executeCommandOnMultipleHosts(
+            List<String> hosts, String command, long timeoutMs, int maxRetries) {
+        return hosts.stream()
+            .collect(Collectors.toMap(
+                host -> host,
+                host -> executeCommand(host, command, timeoutMs, maxRetries)
+            ));
     }
 
     /**
